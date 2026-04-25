@@ -37,6 +37,9 @@ interface PdfJsDocument {
 }
 
 interface PdfJsModule {
+  GlobalWorkerOptions: {
+    workerSrc: string;
+  };
   getDocument: (options: { data: Uint8Array; disableWorker: boolean }) => {
     promise: Promise<PdfJsDocument>;
   };
@@ -53,7 +56,14 @@ let cachedPdfJs: Promise<PdfJsModule> | null = null;
 
 async function loadPdfJs() {
   if (!cachedPdfJs) {
-    cachedPdfJs = import("pdfjs-dist").then((module) => module as unknown as PdfJsModule);
+    cachedPdfJs = import("pdfjs-dist").then((module) => {
+      const pdfjs = module as unknown as PdfJsModule;
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+        "pdfjs-dist/build/pdf.worker.min.mjs",
+        import.meta.url,
+      ).toString();
+      return pdfjs;
+    });
   }
 
   return cachedPdfJs;
@@ -159,7 +169,7 @@ export function PdfEditorApp() {
       const arrayBuffer = await nextFile.arrayBuffer();
       const loadingTask = pdfjs.getDocument({
         data: new Uint8Array(arrayBuffer),
-        disableWorker: true,
+        disableWorker: false,
       });
       const pdfDocument = await loadingTask.promise;
       const nextPages: PreviewPage[] = [];
