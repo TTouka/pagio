@@ -1,5 +1,5 @@
 import { degrees, PDFDocument, PDFPage } from "pdf-lib";
-import type { CropValues, EditPayload, PageInstruction } from "@/lib/pdf/types";
+import type { EditPayload, PageInstruction, SourceRegion } from "@/lib/pdf/types";
 
 interface BoundingBox {
   left: number;
@@ -13,71 +13,27 @@ function normalizeRotation(rotate: number) {
   return normalized < 0 ? normalized + 360 : normalized;
 }
 
-function clampPercentage(value: number) {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-
-  return Math.max(0, Math.min(45, value));
-}
-
-function normalizeCrop(crop: CropValues): CropValues {
-  const normalized = {
-    top: clampPercentage(crop.top),
-    right: clampPercentage(crop.right),
-    bottom: clampPercentage(crop.bottom),
-    left: clampPercentage(crop.left),
-  };
-
-  if (normalized.left + normalized.right >= 95) {
-    normalized.right = Math.max(0, 94 - normalized.left);
-  }
-
-  if (normalized.top + normalized.bottom >= 95) {
-    normalized.bottom = Math.max(0, 94 - normalized.top);
-  }
-
-  return normalized;
-}
-
-function getCroppedBox(page: PDFPage, crop: CropValues): BoundingBox {
+function getSourceBox(page: PDFPage, sourceRegion: SourceRegion): BoundingBox {
   const width = page.getWidth();
   const height = page.getHeight();
-  const safeCrop = normalizeCrop(crop);
 
-  const left = width * (safeCrop.left / 100);
-  const right = width * (1 - safeCrop.right / 100);
-  const bottom = height * (safeCrop.bottom / 100);
-  const top = height * (1 - safeCrop.top / 100);
-
-  return {
-    left,
-    right,
-    bottom,
-    top,
-  };
-}
-
-function splitBox(box: BoundingBox, splitMode: PageInstruction["splitMode"]) {
-  if (splitMode === "none") {
-    return [box];
+  if (sourceRegion === "left") {
+    return { left: 0, right: width / 2, bottom: 0, top: height };
   }
 
-  if (splitMode === "vertical") {
-    const middle = (box.left + box.right) / 2;
-
-    return [
-      { ...box, right: middle },
-      { ...box, left: middle },
-    ];
+  if (sourceRegion === "right") {
+    return { left: width / 2, right: width, bottom: 0, top: height };
   }
 
-  const middle = (box.bottom + box.top) / 2;
+  if (sourceRegion === "top") {
+    return { left: 0, right: width, bottom: height / 2, top: height };
+  }
 
-  return [
-    { ...box, bottom: middle },
-    { ...box, top: middle },
-  ];
+  if (sourceRegion === "bottom") {
+    return { left: 0, right: width, bottom: 0, top: height / 2 };
+  }
+
+  return { left: 0, right: width, bottom: 0, top: height };
 }
 
 function getRotatedPageSize(width: number, height: number, rotate: number) {
@@ -111,42 +67,38 @@ function getRotationPlacement(width: number, height: number, rotate: number) {
   return { x: 0, y: 0 };
 }
 
-export async function transformPdf(
-  inputBytes: Uint8Array,
-  payload: EditPayload,
-) {
+export async function transformPdf(inputBytes: Uint8Array, payload: EditPayload) {
   const sourceDocument = await PDFDocument.load(inputBytes);
   const outputDocument = await PDFDocument.create();
   const sourcePages = sourceDocument.getPages();
 
   for (const instruction of payload.pages) {
+    if (!instruction.include) {
+      continue;
+    }
+
     const sourcePage = sourcePages[instruction.sourceIndex];
 
     if (!sourcePage) {
       throw new Error(`存在しないページ番号が指定されました: ${instruction.pageNumber}`);
     }
 
-    const cropBox = getCroppedBox(sourcePage, instruction.crop);
-    const boxes = splitBox(cropBox, instruction.splitMode);
+    const box = getSourceBox(sourcePage, instruction.sourceRegion);
+    const embeddedPage = await outputDocument.embedPage(sourcePage, box);
+    const width = box.right - box.left;
+    const height = box.top - box.bottom;
+    const size = getRotatedPageSize(width, height, instruction.rotate);
+    const newPage = outputDocument.addPage([size.width, size.height]);
+    const placement = getRotationPlacement(width, height, instruction.rotate);
 
-    for (const box of boxes) {
-      const embeddedPage = await outputDocument.embedPage(sourcePage, box);
-      const width = box.right - box.left;
-      const height = box.top - box.bottom;
-      const size = getRotatedPageSize(width, height, instruction.rotate);
-      const newPage = outputDocument.addPage([size.width, size.height]);
-      const placement = getRotationPlacement(width, height, instruction.rotate);
-
-      newPage.drawPage(embeddedPage, {
-        x: placement.x,
-        y: placement.y,
-        width,
-        height,
-        rotate: degrees(normalizeRotation(instruction.rotate)),
-      });
-    }
+    newPage.drawPage(embeddedPage, {
+      x: placement.x,
+      y: placement.y,
+      width,
+      height,
+      rotate: degrees(normalizeRotation(instruction.rotate)),
+    });
   }
 
   return outputDocument.save();
 }
-

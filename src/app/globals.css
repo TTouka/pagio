@@ -186,6 +186,11 @@ a {
   border-color: rgba(163, 71, 27, 0.58);
 }
 
+.page-card.excluded {
+  opacity: 0.68;
+  background: rgba(238, 232, 225, 0.92);
+}
+
 .preview-frame {
   position: relative;
   display: grid;
@@ -211,24 +216,6 @@ a {
   object-fit: contain;
   filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.12));
   border-radius: 4px;
-}
-
-.crop-overlay {
-  position: absolute;
-  inset: 12px;
-  pointer-events: none;
-}
-
-.crop-overlay::after {
-  content: "";
-  position: absolute;
-  top: calc(var(--crop-top) * 1%);
-  right: calc(var(--crop-right) * 1%);
-  bottom: calc(var(--crop-bottom) * 1%);
-  left: calc(var(--crop-left) * 1%);
-  border: 2px solid rgba(163, 71, 27, 0.95);
-  background: rgba(163, 71, 27, 0.12);
-  border-radius: 2px;
 }
 
 .page-header {
@@ -325,6 +312,7 @@ a {
   accent-color: var(--accent);
 }
 
+.field input[type="text"],
 .field select {
   min-height: 42px;
   padding: 0 12px;

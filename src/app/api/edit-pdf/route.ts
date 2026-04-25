@@ -1,20 +1,16 @@
 import { transformPdf } from "@/lib/pdf/transform";
-import type { CropValues, EditPayload, PageInstruction, SplitMode } from "@/lib/pdf/types";
+import type { EditPayload, PageInstruction, SourceRegion } from "@/lib/pdf/types";
 
 export const runtime = "nodejs";
 
-function isSplitMode(value: unknown): value is SplitMode {
-  return value === "none" || value === "vertical" || value === "horizontal";
-}
-
-function isCropValues(value: unknown): value is CropValues {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const crop = value as Record<string, unknown>;
-
-  return ["top", "right", "bottom", "left"].every((key) => typeof crop[key] === "number");
+function isSourceRegion(value: unknown): value is SourceRegion {
+  return (
+    value === "full" ||
+    value === "left" ||
+    value === "right" ||
+    value === "top" ||
+    value === "bottom"
+  );
 }
 
 function isPageInstruction(value: unknown): value is PageInstruction {
@@ -29,8 +25,8 @@ function isPageInstruction(value: unknown): value is PageInstruction {
     typeof instruction.sourceIndex === "number" &&
     typeof instruction.pageNumber === "number" &&
     typeof instruction.rotate === "number" &&
-    isSplitMode(instruction.splitMode) &&
-    isCropValues(instruction.crop)
+    typeof instruction.include === "boolean" &&
+    isSourceRegion(instruction.sourceRegion)
   );
 }
 
@@ -83,6 +79,14 @@ export async function POST(request: Request) {
     }
 
     const payload = parsePayload(operations);
+
+    if (!payload.pages.some((page) => page.include)) {
+      return Response.json(
+        { message: "出力対象のページを 1 つ以上選択してください。" },
+        { status: 400 },
+      );
+    }
+
     const bytes = new Uint8Array(await file.arrayBuffer());
     const output = await transformPdf(bytes, payload);
 
@@ -94,8 +98,7 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "PDF の編集に失敗しました。";
+    const message = error instanceof Error ? error.message : "PDF の編集に失敗しました。";
 
     return Response.json({ message }, { status: 400 });
   }

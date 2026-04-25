@@ -1,9 +1,11 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import type { CSSProperties, ChangeEvent, DragEvent } from "react";
+import type { ChangeEvent, DragEvent } from "react";
 import { useEffect, useRef, useState } from "react";
-import type { EditPayload, PageInstruction, SplitMode } from "@/lib/pdf/types";
+import type { EditPayload, PageInstruction, SourceRegion } from "@/lib/pdf/types";
+
+type SplitMode = "vertical" | "horizontal";
 
 interface PreviewPage {
   id: string;
@@ -13,17 +15,11 @@ interface PreviewPage {
   height: number;
   previewUrl: string;
   rotate: number;
-  splitMode: SplitMode;
-  crop: {
-    top: number;
-    right: number;
-    bottom: number;
-    left: number;
-  };
+  include: boolean;
+  sourceRegion: SourceRegion;
   splitSource: {
     groupId: string;
-    mode: Exclude<SplitMode, "none">;
-    segmentIndex: number;
+    mode: SplitMode;
     segmentLabel: string;
     originalPage: {
       id: string;
@@ -33,13 +29,7 @@ interface PreviewPage {
       height: number;
       previewUrl: string;
       rotate: number;
-      splitMode: SplitMode;
-      crop: {
-        top: number;
-        right: number;
-        bottom: number;
-        left: number;
-      };
+      include: boolean;
     };
   } | null;
 }
@@ -66,13 +56,6 @@ interface PdfJsModule {
     promise: Promise<PdfJsDocument>;
   };
 }
-
-const emptyCrop = {
-  top: 0,
-  right: 0,
-  bottom: 0,
-  left: 0,
-};
 
 let cachedPdfJs: Promise<PdfJsModule> | null = null;
 
@@ -103,67 +86,75 @@ function createSplitGroupId(pageNumber: number) {
   return `split-${pageNumber}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function getSplitCrop(
-  crop: PreviewPage["crop"],
-  mode: Exclude<SplitMode, "none">,
-  segmentIndex: number,
-) {
-  if (mode === "vertical") {
-    const leftEdge = crop.left;
-    const rightEdge = 100 - crop.right;
-    const middle = leftEdge + (rightEdge - leftEdge) / 2;
-
-    if (segmentIndex === 0) {
-      return {
-        ...crop,
-        right: 100 - middle,
-      };
-    }
-
-    return {
-      ...crop,
-      left: middle,
-    };
-  }
-
-  const bottomEdge = crop.bottom;
-  const topEdge = 100 - crop.top;
-  const middle = bottomEdge + (topEdge - bottomEdge) / 2;
-
-  if (segmentIndex === 0) {
-    return {
-      ...crop,
-      bottom: middle,
-    };
-  }
-
-  return {
-    ...crop,
-    top: 100 - middle,
-  };
-}
-
 function createInstruction(page: PreviewPage): PageInstruction {
   return {
     id: page.id,
     sourceIndex: page.sourceIndex,
     pageNumber: page.pageNumber,
     rotate: page.rotate,
-    splitMode: "none",
-    crop: page.crop,
+    include: page.include,
+    sourceRegion: page.sourceRegion,
   };
 }
 
-function getBaseCrop(page: PreviewPage) {
-  if (!page.splitSource) {
-    return emptyCrop;
+function getSplitRegion(mode: SplitMode, segmentIndex: number): SourceRegion {
+  if (mode === "vertical") {
+    return segmentIndex === 0 ? "left" : "right";
   }
 
-  return getSplitCrop(
-    page.splitSource.originalPage.crop,
-    page.splitSource.mode,
-    page.splitSource.segmentIndex,
-  );
+  return segmentIndex === 0 ? "top" : "bottom";
+}
+
+function parseRangeInput(value: string, maxPageNumber: number) {
+  const tokens = value
+    .split(/[,\s、]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  if (tokens.length === 0) {
+    throw new Error("ページ範囲を入力してください。例: 2-5,8");
+  }
+
+  const selected = new Set<number>();
+
+  for (const token of tokens) {
+    const singleMatch = token.match(/^\d+$/);
+    const rangeMatch = token.match(/^(\d+)-(\d+)$/);
+
+    if (singleMatch) {
+      const page = Number(token);
+
+      if (page < 1 || page > maxPageNumber) {
+        throw new Error(`ページ ${page} は範囲外です。1 から ${maxPageNumber} を指定してください。`);
+      }
+
+      selected.add(page);
+      continue;
+    }
+
+    if (rangeMatch) {
+      const start = Number(rangeMatch[1]);
+      const end = Number(rangeMatch[2]);
+
+      if (start > end) {
+        throw new Error(`範囲 ${token} は開始ページと終了ページが逆です。`);
+      }
+
+      if (start < 1 || end > maxPageNumber) {
+        throw new Error(`範囲 ${token} は 1 から ${maxPageNumber} の中で指定してください。`);
+      }
+
+      for (let page = start; page <= end; page += 1) {
+        selected.add(page);
+      }
+
+      continue;
+    }
+
+    throw new Error(`"${token}" は解釈できません。例: 2-5,8`);
+  }
+
+  return selected;
 }
 
 function getBaseRotate(page: PreviewPage) {
@@ -176,6 +167,7 @@ export function PdfEditorApp() {
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
+  const [pageRangeInput, setPageRangeInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoadingPdf, setIsLoadingPdf] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -184,6 +176,8 @@ export function PdfEditorApp() {
   const downloadNameRef = useRef("edited.pdf");
 
   const selectedPage = pages.find((page) => page.id === selectedPageId) ?? null;
+  const includedPages = pages.filter((page) => page.include).length;
+  const maxPageNumber = pages.reduce((max, page) => Math.max(max, page.pageNumber), 0);
 
   useEffect(() => {
     return () => {
@@ -224,12 +218,40 @@ export function PdfEditorApp() {
     updatePage(id, (page) => ({
       ...page,
       rotate: getBaseRotate(page),
-      splitMode: "none",
-      crop: getBaseCrop(page),
+      include: true,
     }));
   }
 
-  function splitPage(id: string, mode: Exclude<SplitMode, "none">) {
+  function toggleInclude(id: string) {
+    updatePage(id, (page) => ({
+      ...page,
+      include: !page.include,
+    }));
+  }
+
+  function applyPageRange() {
+    if (maxPageNumber === 0) {
+      return;
+    }
+
+    try {
+      const selectedNumbers = parseRangeInput(pageRangeInput, maxPageNumber);
+
+      setPages((currentPages) =>
+        currentPages.map((page) => ({
+          ...page,
+          include: selectedNumbers.has(page.pageNumber),
+        })),
+      );
+      setStatusMessage(`ページ範囲 ${pageRangeInput} を出力対象に適用しました。`);
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "ページ範囲の適用に失敗しました。");
+      setStatusMessage(null);
+    }
+  }
+
+  function splitPage(id: string, mode: SplitMode) {
     const index = pages.findIndex((page) => page.id === id);
 
     if (index === -1) {
@@ -247,12 +269,10 @@ export function PdfEditorApp() {
     const splitPages: PreviewPage[] = segmentLabels.map((segmentLabel, segmentIndex) => ({
       ...page,
       id: createPageId(page.pageNumber),
-      crop: getSplitCrop(page.crop, mode, segmentIndex),
-      splitMode: "none",
+      sourceRegion: getSplitRegion(mode, segmentIndex),
       splitSource: {
         groupId,
         mode,
-        segmentIndex,
         segmentLabel,
         originalPage: {
           id: page.id,
@@ -262,17 +282,12 @@ export function PdfEditorApp() {
           height: page.height,
           previewUrl: page.previewUrl,
           rotate: page.rotate,
-          splitMode: page.splitMode,
-          crop: page.crop,
+          include: page.include,
         },
       },
     }));
 
-    setPages([
-      ...pages.slice(0, index),
-      ...splitPages,
-      ...pages.slice(index + 1),
-    ]);
+    setPages([...pages.slice(0, index), ...splitPages, ...pages.slice(index + 1)]);
     setSelectedPageId(splitPages[0]?.id ?? null);
   }
 
@@ -301,8 +316,8 @@ export function PdfEditorApp() {
       height: originalPage.height,
       previewUrl: originalPage.previewUrl,
       rotate: originalPage.rotate,
-      splitMode: originalPage.splitMode,
-      crop: originalPage.crop,
+      include: groupPages.some((item) => item.include),
+      sourceRegion: "full",
       splitSource: null,
     };
 
@@ -372,8 +387,8 @@ export function PdfEditorApp() {
           height: sizeViewport.height,
           previewUrl: canvas.toDataURL("image/png"),
           rotate: 0,
-          splitMode: "none",
-          crop: emptyCrop,
+          include: true,
+          sourceRegion: "full",
           splitSource: null,
         });
       }
@@ -383,11 +398,11 @@ export function PdfEditorApp() {
       setFile(nextFile);
       setPages(nextPages);
       setSelectedPageId(nextPages[0]?.id ?? null);
+      setPageRangeInput(`1-${nextPages.length}`);
       setStatusMessage(`${nextFile.name} を読み込みました。`);
       downloadNameRef.current = `${nextFile.name.replace(/\.pdf$/i, "") || "edited"}-edited.pdf`;
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "PDF の読み込みに失敗しました。";
+      const message = error instanceof Error ? error.message : "PDF の読み込みに失敗しました。";
       setErrorMessage(message);
       setFile(null);
       setPages([]);
@@ -400,6 +415,11 @@ export function PdfEditorApp() {
   async function handleExport() {
     if (!file || pages.length === 0) {
       setErrorMessage("先に PDF を読み込んでください。");
+      return;
+    }
+
+    if (!pages.some((page) => page.include)) {
+      setErrorMessage("出力対象のページを 1 つ以上選択してください。");
       return;
     }
 
@@ -441,8 +461,7 @@ export function PdfEditorApp() {
       anchor.download = downloadNameRef.current;
       anchor.click();
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "PDF の生成に失敗しました。";
+      const message = error instanceof Error ? error.message : "PDF の生成に失敗しました。";
       setErrorMessage(message);
     } finally {
       setIsProcessing(false);
@@ -494,6 +513,7 @@ export function PdfEditorApp() {
           isSelected ? "selected" : "",
           draggingId === page.id ? "dragging" : "",
           dragTargetId === page.id ? "drag-target" : "",
+          page.include ? "" : "excluded",
         ]
           .filter(Boolean)
           .join(" ")}
@@ -530,17 +550,6 @@ export function PdfEditorApp() {
 
         <div className="preview-frame">
           <img src={page.previewUrl} alt={`PDF ${page.pageNumber} ページのプレビュー`} />
-          <div
-            className="crop-overlay"
-            style={
-              {
-                "--crop-top": page.crop.top,
-                "--crop-right": page.crop.right,
-                "--crop-bottom": page.crop.bottom,
-                "--crop-left": page.crop.left,
-              } as CSSProperties
-            }
-          />
         </div>
 
         <div className="page-actions">
@@ -595,6 +604,16 @@ export function PdfEditorApp() {
         </div>
 
         <div className="page-actions">
+          <button
+            type="button"
+            className={page.include ? "button secondary" : "button primary"}
+            onClick={(event) => {
+              event.stopPropagation();
+              toggleInclude(page.id);
+            }}
+          >
+            {page.include ? "出力対象から外す" : "出力対象に戻す"}
+          </button>
           {page.splitSource ? (
             <button
               type="button"
@@ -634,6 +653,7 @@ export function PdfEditorApp() {
 
         <div className="toolbar">
           <span className="badge">回転 {page.rotate}°</span>
+          <span className="badge">{page.include ? "出力する" : "出力しない"}</span>
           {page.splitSource ? <span className="badge">分割済み</span> : null}
           <button
             type="button"
@@ -654,15 +674,15 @@ export function PdfEditorApp() {
     <main className="page-shell">
       <section className="hero">
         <span className="eyebrow">Browser PDF Editor</span>
-        <h1>回転、分割、並べ替え、切り出しを一つの画面で処理する PDF 編集アプリ</h1>
+        <h1>回転、分割、並べ替え、ページ抽出を一つの画面で処理する PDF 編集アプリ</h1>
         <p>
           PDF をアップロードすると、ページ順の並べ替え、90 度回転、左右または上下への 2
-          分割、余白の切り出しをブラウザ上から指示できます。最終的な PDF はサーバー側で再生成し、新しいファイルとしてダウンロードします。
+          分割、ページ範囲の抽出をブラウザ上から指示できます。最終的な PDF はサーバー側で再生成し、新しいファイルとしてダウンロードします。
         </p>
         <ul>
           <li>ドラッグアンドドロップまたは前後ボタンでページ順を変更</li>
           <li>A3 横を A4 縦 2 ページにしたい場合はページカードを「左右に分割」</li>
-          <li>切り出しは元ページ基準で上下左右の割合を指定</li>
+          <li>ページ抽出は `2-5,8` のような範囲指定で一括適用可能</li>
         </ul>
       </section>
 
@@ -683,7 +703,7 @@ export function PdfEditorApp() {
                 <h2>ページ編集</h2>
                 <p>
                   {file
-                    ? `${file.name} / ${pages.length} ページ`
+                    ? `${file.name} / 全 ${pages.length} ページ候補 / 出力対象 ${includedPages} ページ`
                     : "PDF 読み込み後にページ一覧が表示されます。"}
                 </p>
               </div>
@@ -707,7 +727,7 @@ export function PdfEditorApp() {
             {pages.length === 0 ? (
               <div className="empty-state" style={{ marginTop: 24 }}>
                 <strong>読み込まれた PDF はまだありません。</strong>
-                <span>読み込んだ後にページごとの回転、分割、並び順変更、切り出しができます。</span>
+                <span>読み込んだ後にページごとの回転、分割、並び順変更、ページ抽出ができます。</span>
               </div>
             ) : (
               <div className="pages-grid" style={{ marginTop: 24 }}>
@@ -721,109 +741,66 @@ export function PdfEditorApp() {
           <section className="panel">
             <div className="panel-inner stack">
               <div>
-                <h2>切り出し設定</h2>
-                <p>選択中のページに対して上下左右の切り出し率を指定します。</p>
+                <h2>ページ抽出</h2>
+                <p>出力したいページ番号を指定します。例: `2-5,8`</p>
+              </div>
+
+              <div className="field-grid">
+                <div className="field">
+                  <label htmlFor="page-range">出力対象ページ</label>
+                  <input
+                    id="page-range"
+                    type="text"
+                    value={pageRangeInput}
+                    placeholder="2-5,8"
+                    onChange={(event) => setPageRangeInput(event.target.value)}
+                  />
+                </div>
+                <div className="toolbar">
+                  <button type="button" className="button secondary" onClick={applyPageRange}>
+                    範囲を適用
+                  </button>
+                  <button
+                    type="button"
+                    className="button ghost"
+                    onClick={() => {
+                      setPages((currentPages) =>
+                        currentPages.map((page) => ({
+                          ...page,
+                          include: true,
+                        })),
+                      );
+                      setPageRangeInput(maxPageNumber > 0 ? `1-${maxPageNumber}` : "");
+                    }}
+                  >
+                    全て選択
+                  </button>
+                  <button
+                    type="button"
+                    className="button ghost"
+                    onClick={() => {
+                      setPages((currentPages) =>
+                        currentPages.map((page) => ({
+                          ...page,
+                          include: false,
+                        })),
+                      );
+                    }}
+                  >
+                    全て解除
+                  </button>
+                </div>
               </div>
 
               {selectedPage ? (
-                <div className="field-grid">
-                  <div className="field">
-                    <label htmlFor="crop-top">上 {selectedPage.crop.top}%</label>
-                    <input
-                      id="crop-top"
-                      type="range"
-                      min="0"
-                      max="45"
-                      step="1"
-                      value={selectedPage.crop.top}
-                      onChange={(event) =>
-                        updatePage(selectedPage.id, (page) => ({
-                          ...page,
-                          crop: {
-                            ...page.crop,
-                            top: Number(event.target.value),
-                          },
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="crop-right">右 {selectedPage.crop.right}%</label>
-                    <input
-                      id="crop-right"
-                      type="range"
-                      min="0"
-                      max="45"
-                      step="1"
-                      value={selectedPage.crop.right}
-                      onChange={(event) =>
-                        updatePage(selectedPage.id, (page) => ({
-                          ...page,
-                          crop: {
-                            ...page.crop,
-                            right: Number(event.target.value),
-                          },
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="crop-bottom">下 {selectedPage.crop.bottom}%</label>
-                    <input
-                      id="crop-bottom"
-                      type="range"
-                      min="0"
-                      max="45"
-                      step="1"
-                      value={selectedPage.crop.bottom}
-                      onChange={(event) =>
-                        updatePage(selectedPage.id, (page) => ({
-                          ...page,
-                          crop: {
-                            ...page.crop,
-                            bottom: Number(event.target.value),
-                          },
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="crop-left">左 {selectedPage.crop.left}%</label>
-                    <input
-                      id="crop-left"
-                      type="range"
-                      min="0"
-                      max="45"
-                      step="1"
-                      value={selectedPage.crop.left}
-                      onChange={(event) =>
-                        updatePage(selectedPage.id, (page) => ({
-                          ...page,
-                          crop: {
-                            ...page.crop,
-                            left: Number(event.target.value),
-                          },
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="toolbar">
-                    <button
-                      type="button"
-                      className="button ghost"
-                      onClick={() =>
-                        updatePage(selectedPage.id, (page) => ({
-                          ...page,
-                          crop: getBaseCrop(page),
-                        }))
-                      }
-                    >
-                      切り出しをリセット
-                    </button>
-                  </div>
+                <div className="status success">
+                  選択中: 元ページ {selectedPage.pageNumber}
+                  {selectedPage.splitSource ? ` / ${selectedPage.splitSource.segmentLabel}側` : ""}
+                  {" / "}
+                  {selectedPage.include ? "出力対象" : "出力対象外"}
                 </div>
               ) : (
-                <p className="muted">ページを選択するとここで切り出しを設定できます。</p>
+                <p className="muted">ページを選択するとここに状態を表示します。</p>
               )}
             </div>
           </section>
@@ -836,6 +813,9 @@ export function PdfEditorApp() {
                   分割すると、その場で 2 つのページカードへ展開されます。左右分割は左から右、上下分割は上から下の順で追加され、その後は通常ページと同じように並べ替えできます。
                 </p>
               </div>
+              <p className="muted">
+                範囲指定は元ページ番号ベースです。分割済みページがある場合、同じ元ページ番号を持つカードすべてに一括で適用されます。
+              </p>
               {statusMessage ? <div className="status success">{statusMessage}</div> : null}
               {errorMessage ? <div className="status error">{errorMessage}</div> : null}
             </div>
