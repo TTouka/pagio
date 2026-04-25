@@ -20,6 +20,28 @@ interface PreviewPage {
     bottom: number;
     left: number;
   };
+  splitSource: {
+    groupId: string;
+    mode: Exclude<SplitMode, "none">;
+    segmentIndex: number;
+    segmentLabel: string;
+    originalPage: {
+      id: string;
+      sourceIndex: number;
+      pageNumber: number;
+      width: number;
+      height: number;
+      previewUrl: string;
+      rotate: number;
+      splitMode: SplitMode;
+      crop: {
+        top: number;
+        right: number;
+        bottom: number;
+        left: number;
+      };
+    };
+  } | null;
 }
 
 interface PdfJsPage {
@@ -77,15 +99,75 @@ function createPageId(pageNumber: number) {
   return `page-${pageNumber}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function createSplitGroupId(pageNumber: number) {
+  return `split-${pageNumber}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getSplitCrop(
+  crop: PreviewPage["crop"],
+  mode: Exclude<SplitMode, "none">,
+  segmentIndex: number,
+) {
+  if (mode === "vertical") {
+    const leftEdge = crop.left;
+    const rightEdge = 100 - crop.right;
+    const middle = leftEdge + (rightEdge - leftEdge) / 2;
+
+    if (segmentIndex === 0) {
+      return {
+        ...crop,
+        right: 100 - middle,
+      };
+    }
+
+    return {
+      ...crop,
+      left: middle,
+    };
+  }
+
+  const bottomEdge = crop.bottom;
+  const topEdge = 100 - crop.top;
+  const middle = bottomEdge + (topEdge - bottomEdge) / 2;
+
+  if (segmentIndex === 0) {
+    return {
+      ...crop,
+      bottom: middle,
+    };
+  }
+
+  return {
+    ...crop,
+    top: 100 - middle,
+  };
+}
+
 function createInstruction(page: PreviewPage): PageInstruction {
   return {
     id: page.id,
     sourceIndex: page.sourceIndex,
     pageNumber: page.pageNumber,
     rotate: page.rotate,
-    splitMode: page.splitMode,
+    splitMode: "none",
     crop: page.crop,
   };
+}
+
+function getBaseCrop(page: PreviewPage) {
+  if (!page.splitSource) {
+    return emptyCrop;
+  }
+
+  return getSplitCrop(
+    page.splitSource.originalPage.crop,
+    page.splitSource.mode,
+    page.splitSource.segmentIndex,
+  );
+}
+
+function getBaseRotate(page: PreviewPage) {
+  return page.splitSource?.originalPage.rotate ?? 0;
 }
 
 export function PdfEditorApp() {
@@ -141,10 +223,95 @@ export function PdfEditorApp() {
   function resetPage(id: string) {
     updatePage(id, (page) => ({
       ...page,
-      rotate: 0,
+      rotate: getBaseRotate(page),
       splitMode: "none",
-      crop: emptyCrop,
+      crop: getBaseCrop(page),
     }));
+  }
+
+  function splitPage(id: string, mode: Exclude<SplitMode, "none">) {
+    const index = pages.findIndex((page) => page.id === id);
+
+    if (index === -1) {
+      return;
+    }
+
+    const page = pages[index];
+
+    if (page.splitSource) {
+      return;
+    }
+
+    const groupId = createSplitGroupId(page.pageNumber);
+    const segmentLabels = mode === "vertical" ? ["左", "右"] : ["上", "下"];
+    const splitPages: PreviewPage[] = segmentLabels.map((segmentLabel, segmentIndex) => ({
+      ...page,
+      id: createPageId(page.pageNumber),
+      crop: getSplitCrop(page.crop, mode, segmentIndex),
+      splitMode: "none",
+      splitSource: {
+        groupId,
+        mode,
+        segmentIndex,
+        segmentLabel,
+        originalPage: {
+          id: page.id,
+          sourceIndex: page.sourceIndex,
+          pageNumber: page.pageNumber,
+          width: page.width,
+          height: page.height,
+          previewUrl: page.previewUrl,
+          rotate: page.rotate,
+          splitMode: page.splitMode,
+          crop: page.crop,
+        },
+      },
+    }));
+
+    setPages([
+      ...pages.slice(0, index),
+      ...splitPages,
+      ...pages.slice(index + 1),
+    ]);
+    setSelectedPageId(splitPages[0]?.id ?? null);
+  }
+
+  function undoSplit(id: string) {
+    const page = pages.find((item) => item.id === id);
+
+    if (!page?.splitSource) {
+      return;
+    }
+
+    const groupId = page.splitSource.groupId;
+    const groupPages = pages.filter((item) => item.splitSource?.groupId === groupId);
+    const groupStartIndex = pages.findIndex((item) => item.splitSource?.groupId === groupId);
+    const pagesWithoutGroup = pages.filter((item) => item.splitSource?.groupId !== groupId);
+    const { originalPage } = page.splitSource;
+
+    if (groupPages.length === 0 || groupStartIndex === -1) {
+      return;
+    }
+
+    const restoredPage: PreviewPage = {
+      id: originalPage.id,
+      sourceIndex: originalPage.sourceIndex,
+      pageNumber: originalPage.pageNumber,
+      width: originalPage.width,
+      height: originalPage.height,
+      previewUrl: originalPage.previewUrl,
+      rotate: originalPage.rotate,
+      splitMode: originalPage.splitMode,
+      crop: originalPage.crop,
+      splitSource: null,
+    };
+
+    setPages([
+      ...pagesWithoutGroup.slice(0, groupStartIndex),
+      restoredPage,
+      ...pagesWithoutGroup.slice(groupStartIndex),
+    ]);
+    setSelectedPageId(restoredPage.id);
   }
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -207,6 +374,7 @@ export function PdfEditorApp() {
           rotate: 0,
           splitMode: "none",
           crop: emptyCrop,
+          splitSource: null,
         });
       }
 
@@ -350,7 +518,12 @@ export function PdfEditorApp() {
         <div className="page-header">
           <div>
             <h3>{index + 1} 枚目の出力ページ候補</h3>
-            <p className="muted small">元ページ {page.pageNumber}</p>
+            <p className="muted small">
+              元ページ {page.pageNumber}
+              {page.splitSource
+                ? ` / ${page.splitSource.mode === "vertical" ? "左右分割" : "上下分割"}の${page.splitSource.segmentLabel}側`
+                : ""}
+            </p>
           </div>
           <span className="badge">{formatPageSize(page.width, page.height)}</span>
         </div>
@@ -421,27 +594,47 @@ export function PdfEditorApp() {
           </button>
         </div>
 
-        <div className="field">
-          <label htmlFor={`split-mode-${page.id}`}>分割</label>
-          <select
-            id={`split-mode-${page.id}`}
-            value={page.splitMode}
-            onChange={(event) =>
-              updatePage(page.id, (currentPage) => ({
-                ...currentPage,
-                splitMode: event.target.value as SplitMode,
-              }))
-            }
-          >
-            <option value="none">分割しない</option>
-            <option value="vertical">左右に 2 分割</option>
-            <option value="horizontal">上下に 2 分割</option>
-          </select>
+        <div className="page-actions">
+          {page.splitSource ? (
+            <button
+              type="button"
+              className="button secondary"
+              onClick={(event) => {
+                event.stopPropagation();
+                undoSplit(page.id);
+              }}
+            >
+              分割を取り消す
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  splitPage(page.id, "vertical");
+                }}
+              >
+                左右に分割
+              </button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  splitPage(page.id, "horizontal");
+                }}
+              >
+                上下に分割
+              </button>
+            </>
+          )}
         </div>
 
         <div className="toolbar">
           <span className="badge">回転 {page.rotate}°</span>
-          {page.splitMode !== "none" ? <span className="badge">分割あり</span> : null}
+          {page.splitSource ? <span className="badge">分割済み</span> : null}
           <button
             type="button"
             className="button ghost"
@@ -468,7 +661,7 @@ export function PdfEditorApp() {
         </p>
         <ul>
           <li>ドラッグアンドドロップまたは前後ボタンでページ順を変更</li>
-          <li>A3 横を A4 縦 2 ページにしたい場合は「左右に 2 分割」を選択</li>
+          <li>A3 横を A4 縦 2 ページにしたい場合はページカードを「左右に分割」</li>
           <li>切り出しは元ページ基準で上下左右の割合を指定</li>
         </ul>
       </section>
@@ -621,7 +814,7 @@ export function PdfEditorApp() {
                       onClick={() =>
                         updatePage(selectedPage.id, (page) => ({
                           ...page,
-                          crop: emptyCrop,
+                          crop: getBaseCrop(page),
                         }))
                       }
                     >
@@ -640,7 +833,7 @@ export function PdfEditorApp() {
               <div>
                 <h2>出力メモ</h2>
                 <p className="muted">
-                  分割を指定したページは、PDF 生成時に 2 ページへ展開されます。左右分割は左から右、上下分割は上から下の順で出力されます。
+                  分割すると、その場で 2 つのページカードへ展開されます。左右分割は左から右、上下分割は上から下の順で追加され、その後は通常ページと同じように並べ替えできます。
                 </p>
               </div>
               {statusMessage ? <div className="status success">{statusMessage}</div> : null}
