@@ -73,6 +73,10 @@ function formatPageSize(width: number, height: number) {
   return `${Math.round(width)} x ${Math.round(height)} pt`;
 }
 
+function createPageId(pageNumber: number) {
+  return `page-${pageNumber}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function createInstruction(page: PreviewPage): PageInstruction {
   return {
     id: page.id,
@@ -194,7 +198,7 @@ export function PdfEditorApp() {
         }).promise;
 
         nextPages.push({
-          id: `page-${pageNumber}-${crypto.randomUUID()}`,
+          id: createPageId(pageNumber),
           sourceIndex: pageNumber - 1,
           pageNumber,
           width: sizeViewport.width,
