@@ -142,12 +142,17 @@ export function PdfEditorApp() {
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
+  const [isUploadDragActive, setIsUploadDragActive] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoadingPdf, setIsLoadingPdf] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const downloadNameRef = useRef("edited.pdf");
+  const lastSelectionRef = useRef<{
+    id: string;
+    nextInclude: boolean;
+  } | null>(null);
 
   const selectedPage = pages.find((page) => page.id === selectedPageId) ?? null;
   const includedPages = pages.filter((page) => page.include).length;
@@ -196,11 +201,56 @@ export function PdfEditorApp() {
     }));
   }
 
-  function toggleInclude(id: string) {
-    updatePage(id, (page) => ({
-      ...page,
-      include: !page.include,
-    }));
+  function applyIncludeSelection(id: string, useRange: boolean) {
+    const currentPage = pages.find((page) => page.id === id);
+
+    if (!currentPage) {
+      return;
+    }
+
+    const nextInclude = !currentPage.include;
+    const currentIndex = pages.findIndex((page) => page.id === id);
+    const lastSelection = lastSelectionRef.current;
+    const lastIndex =
+      lastSelection ? pages.findIndex((page) => page.id === lastSelection.id) : -1;
+    const shouldApplyRange =
+      useRange &&
+      lastSelection !== null &&
+      lastSelection.nextInclude === nextInclude &&
+      lastIndex !== -1;
+
+    if (shouldApplyRange) {
+      const start = Math.min(lastIndex, currentIndex);
+      const end = Math.max(lastIndex, currentIndex);
+
+      setPages((currentPages) =>
+        currentPages.map((page, index) =>
+          index >= start && index <= end
+            ? {
+                ...page,
+                include: nextInclude,
+              }
+            : page,
+        ),
+      );
+    } else {
+      setPages((currentPages) =>
+        currentPages.map((page) =>
+          page.id === id
+            ? {
+                ...page,
+                include: nextInclude,
+              }
+            : page,
+        ),
+      );
+    }
+
+    setSelectedPageId(id);
+    lastSelectionRef.current = {
+      id,
+      nextInclude,
+    };
   }
 
   function splitPage(id: string, mode: SplitMode) {
@@ -281,13 +331,7 @@ export function PdfEditorApp() {
     setSelectedPageId(restoredPage.id);
   }
 
-  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const nextFile = event.target.files?.[0] ?? null;
-
-    if (!nextFile) {
-      return;
-    }
-
+  async function processFile(nextFile: File) {
     if (!nextFile.name.toLowerCase().endsWith(".pdf")) {
       setErrorMessage("PDF ファイルを選択してください。");
       return;
@@ -350,6 +394,7 @@ export function PdfEditorApp() {
       setFile(nextFile);
       setPages(nextPages);
       setSelectedPageId(nextPages[0]?.id ?? null);
+      lastSelectionRef.current = null;
       setStatusMessage(`${nextFile.name} を読み込みました。`);
       downloadNameRef.current = `${nextFile.name.replace(/\.pdf$/i, "") || "edited"}-edited.pdf`;
     } catch (error) {
@@ -361,6 +406,16 @@ export function PdfEditorApp() {
     } finally {
       setIsLoadingPdf(false);
     }
+  }
+
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const nextFile = event.target.files?.[0] ?? null;
+
+    if (!nextFile) {
+      return;
+    }
+
+    await processFile(nextFile);
   }
 
   async function handleExport() {
@@ -453,6 +508,19 @@ export function PdfEditorApp() {
     setDragTargetId(null);
   }
 
+  async function handleUploadDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsUploadDragActive(false);
+
+    const nextFile = event.dataTransfer.files?.[0];
+
+    if (!nextFile) {
+      return;
+    }
+
+    await processFile(nextFile);
+  }
+
   function renderPageCard(page: PreviewPage, index: number) {
     const isSelected = page.id === selectedPageId;
     const splitMaskClassName =
@@ -506,29 +574,33 @@ export function PdfEditorApp() {
                 : ""}
             </p>
           </div>
-          <span className="badge">{formatPageSize(page.width, page.height)}</span>
         </div>
 
-        <div className="preview-frame">
+        <div
+          className="preview-frame"
+          onClick={(event) => {
+            event.stopPropagation();
+            applyIncludeSelection(page.id, event.shiftKey);
+          }}
+        >
           <img src={page.previewUrl} alt={`PDF ${page.pageNumber} ページのプレビュー`} />
           {splitMaskClassName ? <div className={splitMaskClassName} /> : null}
           {page.splitSource ? <div className="split-chip">{page.splitSource.segmentLabel}側</div> : null}
+          <input
+            className="thumbnail-checkbox"
+            type="checkbox"
+            aria-label={`${getPageOutputLabel(page)} を出力対象にする`}
+            checked={page.include}
+            readOnly
+            onClick={(event) => {
+              event.stopPropagation();
+              applyIncludeSelection(page.id, event.shiftKey);
+            }}
+          />
+          <span className="page-size-text">{formatPageSize(page.width, page.height)}</span>
         </div>
 
         <div className="page-actions">
-          <label
-            className="checkbox-row"
-            onClick={(event) => {
-              event.stopPropagation();
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={page.include}
-              onChange={() => toggleInclude(page.id)}
-            />
-            <span>出力対象</span>
-          </label>
           <div className="icon-actions">
             <button
               type="button"
@@ -658,19 +730,37 @@ export function PdfEditorApp() {
         <ul>
           <li>ドラッグアンドドロップまたは前後ボタンでページ順を変更</li>
           <li>A3 横を A4 縦 2 ページにしたい場合はページカードを「左右に分割」</li>
-          <li>ページ抽出は各カードのチェックボックスで選択</li>
+          <li>ページ抽出はサムネイル左上のチェックボックスかサムネイルクリックで選択</li>
         </ul>
       </section>
 
       <section className="workspace">
         <div className="panel">
           <div className="panel-inner">
-            <div className="upload-box">
+            <div
+              className={`upload-box${isUploadDragActive ? " active" : ""}`}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setIsUploadDragActive(true);
+              }}
+              onDragLeave={(event) => {
+                if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  return;
+                }
+
+                setIsUploadDragActive(false);
+              }}
+              onDrop={handleUploadDrop}
+            >
               <h2>PDF を読み込む</h2>
               <p className="muted">
-                まず PDF を 1 つ選択してください。ページのプレビューと編集パネルを生成します。
+                PDF を選択するか、この枠へドラッグアンドドロップしてください。ページのプレビューと編集パネルを生成します。
               </p>
-              <input type="file" accept="application/pdf,.pdf" onChange={handleFileChange} />
+              <input
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={handleFileChange}
+              />
               {isLoadingPdf ? <p className="muted">PDF を解析中です...</p> : null}
             </div>
 
@@ -690,7 +780,7 @@ export function PdfEditorApp() {
                   onClick={handleExport}
                   disabled={!file || pages.length === 0 || isProcessing || isLoadingPdf}
                 >
-                  {isProcessing ? "生成中..." : "新しい PDF を生成"}
+                  {isProcessing ? "生成中..." : "選択したページをDL"}
                 </button>
                 {downloadUrl ? (
                   <a className="button secondary" href={downloadUrl} download={downloadNameRef.current}>
@@ -718,7 +808,7 @@ export function PdfEditorApp() {
             <div className="panel-inner stack">
               <div>
                 <h2>ページ抽出</h2>
-                <p>各ページカードのチェックボックスで、出力するページだけを選択します。</p>
+                <p>サムネイル左上のチェック、またはサムネイルクリックで出力対象を切り替えます。Shift+クリックで範囲選択できます。</p>
               </div>
 
               <div className="field-grid">

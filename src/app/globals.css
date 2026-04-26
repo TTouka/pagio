@@ -124,6 +124,16 @@ a {
   border: 1px dashed rgba(163, 71, 27, 0.4);
   border-radius: var(--radius-sm);
   background: rgba(255, 250, 242, 0.9);
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.upload-box.active {
+  border-color: rgba(163, 71, 27, 0.8);
+  background: rgba(255, 244, 228, 0.98);
+  transform: translateY(-2px);
 }
 
 .upload-box input[type="file"] {
@@ -216,6 +226,27 @@ a {
   object-fit: contain;
   filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.12));
   border-radius: 4px;
+}
+
+.thumbnail-checkbox {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  z-index: 2;
+}
+
+.page-size-text {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: rgba(33, 23, 14, 0.78);
+  z-index: 2;
 }
 
 .split-mask {
@@ -371,30 +402,10 @@ a {
   font-weight: 700;
 }
 
-.checkbox-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 40px;
-  padding: 0 14px;
-  border-radius: 999px;
-  border: 1px solid rgba(163, 71, 27, 0.25);
-  background: rgba(255, 248, 241, 0.95);
-  font-size: 0.92rem;
-  font-weight: 700;
-}
-
-.checkbox-row input {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--accent);
-}
-
 .icon-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-left: auto;
 }
 
 .sidebar {
