@@ -105,60 +105,35 @@ function getSplitRegion(mode: SplitMode, segmentIndex: number): SourceRegion {
   return segmentIndex === 0 ? "top" : "bottom";
 }
 
-function parseRangeInput(value: string, maxPageNumber: number) {
-  const tokens = value
-    .split(/[,\s、]+/)
-    .map((token) => token.trim())
-    .filter(Boolean);
-
-  if (tokens.length === 0) {
-    throw new Error("ページ範囲を入力してください。例: 2-5,8");
-  }
-
-  const selected = new Set<number>();
-
-  for (const token of tokens) {
-    const singleMatch = token.match(/^\d+$/);
-    const rangeMatch = token.match(/^(\d+)-(\d+)$/);
-
-    if (singleMatch) {
-      const page = Number(token);
-
-      if (page < 1 || page > maxPageNumber) {
-        throw new Error(`ページ ${page} は範囲外です。1 から ${maxPageNumber} を指定してください。`);
-      }
-
-      selected.add(page);
-      continue;
-    }
-
-    if (rangeMatch) {
-      const start = Number(rangeMatch[1]);
-      const end = Number(rangeMatch[2]);
-
-      if (start > end) {
-        throw new Error(`範囲 ${token} は開始ページと終了ページが逆です。`);
-      }
-
-      if (start < 1 || end > maxPageNumber) {
-        throw new Error(`範囲 ${token} は 1 から ${maxPageNumber} の中で指定してください。`);
-      }
-
-      for (let page = start; page <= end; page += 1) {
-        selected.add(page);
-      }
-
-      continue;
-    }
-
-    throw new Error(`"${token}" は解釈できません。例: 2-5,8`);
-  }
-
-  return selected;
-}
-
 function getBaseRotate(page: PreviewPage) {
   return page.splitSource?.originalPage.rotate ?? 0;
+}
+
+function getPageOutputLabel(page: PreviewPage) {
+  return `${page.pageNumber}${page.splitSource ? `(${page.splitSource.segmentLabel})` : ""}`;
+}
+
+function MaterialIcon({
+  path,
+  title,
+}: {
+  path: string;
+  title: string;
+}) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <title>{title}</title>
+      <path d={path} />
+    </svg>
+  );
 }
 
 export function PdfEditorApp() {
@@ -167,7 +142,6 @@ export function PdfEditorApp() {
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
-  const [pageRangeInput, setPageRangeInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoadingPdf, setIsLoadingPdf] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -177,7 +151,7 @@ export function PdfEditorApp() {
 
   const selectedPage = pages.find((page) => page.id === selectedPageId) ?? null;
   const includedPages = pages.filter((page) => page.include).length;
-  const maxPageNumber = pages.reduce((max, page) => Math.max(max, page.pageNumber), 0);
+  const includedOutputLabels = pages.filter((page) => page.include).map(getPageOutputLabel);
 
   useEffect(() => {
     return () => {
@@ -227,28 +201,6 @@ export function PdfEditorApp() {
       ...page,
       include: !page.include,
     }));
-  }
-
-  function applyPageRange() {
-    if (maxPageNumber === 0) {
-      return;
-    }
-
-    try {
-      const selectedNumbers = parseRangeInput(pageRangeInput, maxPageNumber);
-
-      setPages((currentPages) =>
-        currentPages.map((page) => ({
-          ...page,
-          include: selectedNumbers.has(page.pageNumber),
-        })),
-      );
-      setStatusMessage(`ページ範囲 ${pageRangeInput} を出力対象に適用しました。`);
-      setErrorMessage(null);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "ページ範囲の適用に失敗しました。");
-      setStatusMessage(null);
-    }
   }
 
   function splitPage(id: string, mode: SplitMode) {
@@ -398,7 +350,6 @@ export function PdfEditorApp() {
       setFile(nextFile);
       setPages(nextPages);
       setSelectedPageId(nextPages[0]?.id ?? null);
-      setPageRangeInput(`1-${nextPages.length}`);
       setStatusMessage(`${nextFile.name} を読み込みました。`);
       downloadNameRef.current = `${nextFile.name.replace(/\.pdf$/i, "") || "edited"}-edited.pdf`;
     } catch (error) {
@@ -504,6 +455,16 @@ export function PdfEditorApp() {
 
   function renderPageCard(page: PreviewPage, index: number) {
     const isSelected = page.id === selectedPageId;
+    const splitMaskClassName =
+      page.sourceRegion === "left"
+        ? "split-mask right"
+        : page.sourceRegion === "right"
+          ? "split-mask left"
+          : page.sourceRegion === "top"
+            ? "split-mask bottom"
+            : page.sourceRegion === "bottom"
+              ? "split-mask top"
+              : null;
 
     return (
       <article
@@ -550,70 +511,85 @@ export function PdfEditorApp() {
 
         <div className="preview-frame">
           <img src={page.previewUrl} alt={`PDF ${page.pageNumber} ページのプレビュー`} />
+          {splitMaskClassName ? <div className={splitMaskClassName} /> : null}
+          {page.splitSource ? <div className="split-chip">{page.splitSource.segmentLabel}側</div> : null}
         </div>
 
         <div className="page-actions">
-          <button
-            type="button"
-            className="button secondary"
+          <label
+            className="checkbox-row"
             onClick={(event) => {
               event.stopPropagation();
-              updatePage(page.id, (currentPage) => ({
-                ...currentPage,
-                rotate: (currentPage.rotate + 270) % 360,
-              }));
             }}
           >
-            左回転
-          </button>
-          <button
-            type="button"
-            className="button secondary"
-            onClick={(event) => {
-              event.stopPropagation();
-              updatePage(page.id, (currentPage) => ({
-                ...currentPage,
-                rotate: (currentPage.rotate + 90) % 360,
-              }));
-            }}
-          >
-            右回転
-          </button>
-          <button
-            type="button"
-            className="button ghost"
-            onClick={(event) => {
-              event.stopPropagation();
-              movePage(page.id, -1);
-            }}
-            disabled={index === 0}
-          >
-            前へ
-          </button>
-          <button
-            type="button"
-            className="button ghost"
-            onClick={(event) => {
-              event.stopPropagation();
-              movePage(page.id, 1);
-            }}
-            disabled={index === pages.length - 1}
-          >
-            後へ
-          </button>
+            <input
+              type="checkbox"
+              checked={page.include}
+              onChange={() => toggleInclude(page.id)}
+            />
+            <span>出力対象</span>
+          </label>
+          <div className="icon-actions">
+            <button
+              type="button"
+              className="button secondary icon-button"
+              aria-label="左回転"
+              title="左回転"
+              onClick={(event) => {
+                event.stopPropagation();
+                updatePage(page.id, (currentPage) => ({
+                  ...currentPage,
+                  rotate: (currentPage.rotate + 270) % 360,
+                }));
+              }}
+            >
+              <MaterialIcon path="M12 5V2L8 6l4 4V7c3.31 0 6 2.69 6 6a6 6 0 0 1-6 6 6 6 0 0 1-5.65-4H4.26A8 8 0 0 0 12 21a8 8 0 0 0 0-16Z" title="左回転" />
+            </button>
+            <button
+              type="button"
+              className="button secondary icon-button"
+              aria-label="右回転"
+              title="右回転"
+              onClick={(event) => {
+                event.stopPropagation();
+                updatePage(page.id, (currentPage) => ({
+                  ...currentPage,
+                  rotate: (currentPage.rotate + 90) % 360,
+                }));
+              }}
+            >
+              <MaterialIcon path="M12 5V2l4 4-4 4V7a6 6 0 1 0 5.65 4h2.09A8 8 0 1 1 12 5Z" title="右回転" />
+            </button>
+            <button
+              type="button"
+              className="button ghost icon-button"
+              aria-label="前へ移動"
+              title="前へ移動"
+              onClick={(event) => {
+                event.stopPropagation();
+                movePage(page.id, -1);
+              }}
+              disabled={index === 0}
+            >
+              <MaterialIcon path="m15 18-6-6 6-6" title="前へ移動" />
+            </button>
+            <button
+              type="button"
+              className="button ghost icon-button"
+              aria-label="後へ移動"
+              title="後へ移動"
+              onClick={(event) => {
+                event.stopPropagation();
+                movePage(page.id, 1);
+              }}
+              disabled={index === pages.length - 1}
+            >
+              <MaterialIcon path="m9 18 6-6-6-6" title="後へ移動" />
+            </button>
+          </div>
         </div>
 
         <div className="page-actions">
-          <button
-            type="button"
-            className={page.include ? "button secondary" : "button primary"}
-            onClick={(event) => {
-              event.stopPropagation();
-              toggleInclude(page.id);
-            }}
-          >
-            {page.include ? "出力対象から外す" : "出力対象に戻す"}
-          </button>
           {page.splitSource ? (
             <button
               type="button"
@@ -682,7 +658,7 @@ export function PdfEditorApp() {
         <ul>
           <li>ドラッグアンドドロップまたは前後ボタンでページ順を変更</li>
           <li>A3 横を A4 縦 2 ページにしたい場合はページカードを「左右に分割」</li>
-          <li>ページ抽出は `2-5,8` のような範囲指定で一括適用可能</li>
+          <li>ページ抽出は各カードのチェックボックスで選択</li>
         </ul>
       </section>
 
@@ -742,24 +718,11 @@ export function PdfEditorApp() {
             <div className="panel-inner stack">
               <div>
                 <h2>ページ抽出</h2>
-                <p>出力したいページ番号を指定します。例: `2-5,8`</p>
+                <p>各ページカードのチェックボックスで、出力するページだけを選択します。</p>
               </div>
 
               <div className="field-grid">
-                <div className="field">
-                  <label htmlFor="page-range">出力対象ページ</label>
-                  <input
-                    id="page-range"
-                    type="text"
-                    value={pageRangeInput}
-                    placeholder="2-5,8"
-                    onChange={(event) => setPageRangeInput(event.target.value)}
-                  />
-                </div>
                 <div className="toolbar">
-                  <button type="button" className="button secondary" onClick={applyPageRange}>
-                    範囲を適用
-                  </button>
                   <button
                     type="button"
                     className="button ghost"
@@ -770,7 +733,8 @@ export function PdfEditorApp() {
                           include: true,
                         })),
                       );
-                      setPageRangeInput(maxPageNumber > 0 ? `1-${maxPageNumber}` : "");
+                      setStatusMessage("全ページを出力対象にしました。");
+                      setErrorMessage(null);
                     }}
                   >
                     全て選択
@@ -785,10 +749,16 @@ export function PdfEditorApp() {
                           include: false,
                         })),
                       );
+                      setStatusMessage("全ページを出力対象から外しました。");
+                      setErrorMessage(null);
                     }}
                   >
                     全て解除
                   </button>
+                </div>
+                <div className="status success">
+                  出力対象 {includedPages} 件
+                  {includedOutputLabels.length > 0 ? ` / ${includedOutputLabels.join(", ")}` : " / 未選択"}
                 </div>
               </div>
 
@@ -813,9 +783,7 @@ export function PdfEditorApp() {
                   分割すると、その場で 2 つのページカードへ展開されます。左右分割は左から右、上下分割は上から下の順で追加され、その後は通常ページと同じように並べ替えできます。
                 </p>
               </div>
-              <p className="muted">
-                範囲指定は元ページ番号ベースです。分割済みページがある場合、同じ元ページ番号を持つカードすべてに一括で適用されます。
-              </p>
+              <p className="muted">分割済みページはサムネイル上で、出力されない側をグレーの編みかけで示します。</p>
               {statusMessage ? <div className="status success">{statusMessage}</div> : null}
               {errorMessage ? <div className="status error">{errorMessage}</div> : null}
             </div>

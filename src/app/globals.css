@@ -218,6 +218,60 @@ a {
   border-radius: 4px;
 }
 
+.split-mask {
+  position: absolute;
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgba(91, 78, 67, 0.26) 0,
+      rgba(91, 78, 67, 0.26) 10px,
+      rgba(91, 78, 67, 0.42) 10px,
+      rgba(91, 78, 67, 0.42) 20px
+    ),
+    rgba(225, 219, 212, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(91, 78, 67, 0.18);
+}
+
+.split-mask.left {
+  top: 12px;
+  bottom: 12px;
+  left: 12px;
+  width: calc(50% - 12px);
+}
+
+.split-mask.right {
+  top: 12px;
+  bottom: 12px;
+  right: 12px;
+  width: calc(50% - 12px);
+}
+
+.split-mask.top {
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  height: calc(50% - 12px);
+}
+
+.split-mask.bottom {
+  bottom: 12px;
+  left: 12px;
+  right: 12px;
+  height: calc(50% - 12px);
+}
+
+.split-chip {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(33, 23, 14, 0.78);
+  color: #fffaf6;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 .page-header {
   display: flex;
   justify-content: space-between;
@@ -292,6 +346,16 @@ a {
   transform: none;
 }
 
+.icon-button {
+  min-width: 40px;
+  padding: 0;
+}
+
+.icon-button svg {
+  width: 20px;
+  height: 20px;
+}
+
 .field-grid {
   display: grid;
   gap: 16px;
@@ -307,18 +371,30 @@ a {
   font-weight: 700;
 }
 
-.field input[type="range"] {
-  width: 100%;
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(163, 71, 27, 0.25);
+  background: rgba(255, 248, 241, 0.95);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.checkbox-row input {
+  width: 18px;
+  height: 18px;
   accent-color: var(--accent);
 }
 
-.field input[type="text"],
-.field select {
-  min-height: 42px;
-  padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #fff;
+.icon-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .sidebar {
