@@ -3,6 +3,10 @@ import type { EditPayload, PageInstruction, SourceRegion } from "@/lib/pdf/types
 
 export const runtime = "nodejs";
 
+function isRightAngleRotation(value: unknown): value is number {
+  return value === 0 || value === 90 || value === 180 || value === 270;
+}
+
 function isSourceRegion(value: unknown): value is SourceRegion {
   return (
     value === "full" ||
@@ -24,7 +28,7 @@ function isPageInstruction(value: unknown): value is PageInstruction {
     typeof instruction.id === "string" &&
     typeof instruction.sourceIndex === "number" &&
     typeof instruction.pageNumber === "number" &&
-    typeof instruction.rotate === "number" &&
+    isRightAngleRotation(instruction.rotate) &&
     typeof instruction.include === "boolean" &&
     isSourceRegion(instruction.sourceRegion)
   );
