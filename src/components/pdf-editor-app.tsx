@@ -725,10 +725,10 @@ export function PdfEditorApp() {
           <p>回転 / 分割 / 並べ替え / 抽出</p>
         </div>
         <div className="hero-chips">
-          <span className="hero-chip">Rotate</span>
-          <span className="hero-chip">Split</span>
-          <span className="hero-chip">Reorder</span>
-          <span className="hero-chip">Export</span>
+          <span className="hero-chip">回転</span>
+          <span className="hero-chip">分割</span>
+          <span className="hero-chip">並べ替え</span>
+          <span className="hero-chip">出力</span>
         </div>
       </section>
 
