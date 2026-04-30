@@ -566,12 +566,10 @@ export function PdfEditorApp() {
       >
         <div className="page-header">
           <div>
-            <h3>{index + 1} 枚目の出力ページ候補</h3>
+            <h3>出力 {index + 1}</h3>
             <p className="muted small">
-              元ページ {page.pageNumber}
-              {page.splitSource
-                ? ` / ${page.splitSource.mode === "vertical" ? "左右分割" : "上下分割"}の${page.splitSource.segmentLabel}側`
-                : ""}
+              元 {page.pageNumber}
+              {page.splitSource ? ` / ${page.splitSource.segmentLabel}` : ""}
             </p>
           </div>
         </div>
@@ -671,7 +669,7 @@ export function PdfEditorApp() {
                 undoSplit(page.id);
               }}
             >
-              分割を取り消す
+              分割解除
             </button>
           ) : (
             <>
@@ -683,7 +681,7 @@ export function PdfEditorApp() {
                   splitPage(page.id, "vertical");
                 }}
               >
-                左右に分割
+                左右分割
               </button>
               <button
                 type="button"
@@ -693,7 +691,7 @@ export function PdfEditorApp() {
                   splitPage(page.id, "horizontal");
                 }}
               >
-                上下に分割
+                上下分割
               </button>
             </>
           )}
@@ -701,8 +699,8 @@ export function PdfEditorApp() {
 
         <div className="toolbar">
           <span className="badge">回転 {page.rotate}°</span>
-          <span className="badge">{page.include ? "出力する" : "出力しない"}</span>
-          {page.splitSource ? <span className="badge">分割済み</span> : null}
+          <span className="badge">{page.include ? "含む" : "除外"}</span>
+          {page.splitSource ? <span className="badge">分割</span> : null}
           <button
             type="button"
             className="button ghost"
@@ -711,7 +709,7 @@ export function PdfEditorApp() {
               resetPage(page.id);
             }}
           >
-            このページを初期化
+            戻す
           </button>
         </div>
       </article>
@@ -721,17 +719,17 @@ export function PdfEditorApp() {
   return (
     <main className="page-shell">
       <section className="hero">
-        <span className="eyebrow">Browser PDF Editor</span>
-        <h1>回転、分割、並べ替え、ページ抽出を一つの画面で処理する PDF 編集アプリ</h1>
-        <p>
-          PDF をアップロードすると、ページ順の並べ替え、90 度回転、左右または上下への 2
-          分割、ページ範囲の抽出をブラウザ上から指示できます。最終的な PDF はサーバー側で再生成し、新しいファイルとしてダウンロードします。
-        </p>
-        <ul>
-          <li>ドラッグアンドドロップまたは前後ボタンでページ順を変更</li>
-          <li>A3 横を A4 縦 2 ページにしたい場合はページカードを「左右に分割」</li>
-          <li>ページ抽出はサムネイル左上のチェックボックスかサムネイルクリックで選択</li>
-        </ul>
+        <div className="hero-heading">
+          <span className="eyebrow">PDF Editor</span>
+          <h1>PDF 編集</h1>
+          <p>回転 / 分割 / 並べ替え / 抽出</p>
+        </div>
+        <div className="hero-chips">
+          <span className="hero-chip">回転</span>
+          <span className="hero-chip">分割</span>
+          <span className="hero-chip">並べ替え</span>
+          <span className="hero-chip">出力</span>
+        </div>
       </section>
 
       <section className="workspace">
@@ -752,10 +750,8 @@ export function PdfEditorApp() {
               }}
               onDrop={handleUploadDrop}
             >
-              <h2>PDF を読み込む</h2>
-              <p className="muted">
-                PDF を選択するか、この枠へドラッグアンドドロップしてください。ページのプレビューと編集パネルを生成します。
-              </p>
+              <h2>PDF</h2>
+              <p className="muted small">選択またはドロップ</p>
               <input
                 type="file"
                 accept="application/pdf,.pdf"
@@ -766,11 +762,11 @@ export function PdfEditorApp() {
 
             <div className="workspace-header" style={{ marginTop: 24 }}>
               <div>
-                <h2>ページ編集</h2>
+                <h2>ページ</h2>
                 <p>
                   {file
-                    ? `${file.name} / 全 ${pages.length} ページ候補 / 出力対象 ${includedPages} ページ`
-                    : "PDF 読み込み後にページ一覧が表示されます。"}
+                    ? `${file.name} / ${pages.length} 件 / 出力 ${includedPages} 件`
+                    : "PDF 未選択"}
                 </p>
               </div>
               <div className="toolbar">
@@ -792,8 +788,7 @@ export function PdfEditorApp() {
 
             {pages.length === 0 ? (
               <div className="empty-state" style={{ marginTop: 24 }}>
-                <strong>読み込まれた PDF はまだありません。</strong>
-                <span>読み込んだ後にページごとの回転、分割、並び順変更、ページ抽出ができます。</span>
+                <strong>PDF を読み込んでください</strong>
               </div>
             ) : (
               <div className="pages-grid" style={{ marginTop: 24 }}>
@@ -807,8 +802,8 @@ export function PdfEditorApp() {
           <section className="panel">
             <div className="panel-inner stack">
               <div>
-                <h2>ページ抽出</h2>
-                <p>サムネイル左上のチェック、またはサムネイルクリックで出力対象を切り替えます。Shift+クリックで範囲選択できます。</p>
+                <h2>選択</h2>
+                <p className="muted small">Shift+クリックで範囲選択</p>
               </div>
 
               <div className="field-grid">
@@ -843,39 +838,34 @@ export function PdfEditorApp() {
                       setErrorMessage(null);
                     }}
                   >
-                    全て解除
+                    解除
                   </button>
                 </div>
-                <div className="status success">
+                <div className="status info">
                   出力対象 {includedPages} 件
                   {includedOutputLabels.length > 0 ? ` / ${includedOutputLabels.join(", ")}` : " / 未選択"}
                 </div>
               </div>
 
               {selectedPage ? (
-                <div className="status success">
-                  選択中: 元ページ {selectedPage.pageNumber}
+                <div className="status info">
+                  選択中: 元 {selectedPage.pageNumber}
                   {selectedPage.splitSource ? ` / ${selectedPage.splitSource.segmentLabel}側` : ""}
                   {" / "}
-                  {selectedPage.include ? "出力対象" : "出力対象外"}
+                  {selectedPage.include ? "含む" : "除外"}
                 </div>
               ) : (
-                <p className="muted">ページを選択するとここに状態を表示します。</p>
+                <div className="status info">未選択</div>
               )}
             </div>
           </section>
 
           <section className="panel">
             <div className="panel-inner stack">
-              <div>
-                <h2>出力メモ</h2>
-                <p className="muted">
-                  分割すると、その場で 2 つのページカードへ展開されます。左右分割は左から右、上下分割は上から下の順で追加され、その後は通常ページと同じように並べ替えできます。
-                </p>
-              </div>
-              <p className="muted">分割済みページはサムネイル上で、出力されない側をグレーの編みかけで示します。</p>
+              <h2>状態</h2>
               {statusMessage ? <div className="status success">{statusMessage}</div> : null}
               {errorMessage ? <div className="status error">{errorMessage}</div> : null}
+              {!statusMessage && !errorMessage ? <div className="status info">待機中</div> : null}
             </div>
           </section>
         </aside>
