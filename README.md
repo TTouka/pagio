@@ -39,6 +39,9 @@ docker run --rm -p 3000:3000 pdf-editor
 docker compose up --build
 ```
 
+Docker Compose では nginx が `http://localhost:3000` でリクエストを受け、アプリケーションへ転送します。
+nginx のアクセスログは標準的な項目に `request_time` を追加して stdout へ出力します。
+
 ## 補足
 
 - PDF のプレビュー表示はブラウザ上で行います
